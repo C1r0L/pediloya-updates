@@ -38,6 +38,11 @@ jobs:
             gh release create "$tag" .incoming/PediloYa.apk --title "PediloYa pruebas $VERSION_CODE" \
               --notes "APK de pruebas. Requiere confirmar la instalación en Android. El código fuente permanece privado." --latest=false
           fi
+          # Re-runs must never announce a different APK under an existing version.
+          gh release download "$tag" --pattern PediloYa.apk --dir "$RUNNER_TEMP/release-check"
+          expected="$(jq -r .sha256 .incoming/build.json)"
+          actual="$(sha256sum "$RUNNER_TEMP/release-check/PediloYa.apk" | cut -d' ' -f1)"
+          test "$actual" = "$expected"
       - name: Announce update after the APK is available
         env:
           GH_TOKEN: ${{ github.token }}
