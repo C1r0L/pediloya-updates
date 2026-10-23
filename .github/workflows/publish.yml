@@ -1,0 +1,57 @@
+name: Publish testing update
+on:
+  push:
+    branches: [main]
+    paths: ['.incoming/**']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-testing-update
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify staged APK metadata
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, os
+          data = json.loads(pathlib.Path('.incoming/build.json').read_text())
+          apk = pathlib.Path('.incoming/PediloYa.apk')
+          code = int(data['versionCode'])
+          assert 1 <= code <= 2100000000
+          assert data['sizeBytes'] == apk.stat().st_size
+          assert data['sha256'] == hashlib.sha256(apk.read_bytes()).hexdigest()
+          assert data['downloadUrl'] == f'https://github.com/C1r0L/pediloya-updates/releases/download/v{code}/PediloYa.apk'
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'VERSION_CODE={code}\n')
+          PY
+      - name: Create immutable APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$VERSION_CODE"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" .incoming/PediloYa.apk --title "PediloYa pruebas $VERSION_CODE" \
+              --notes "APK de pruebas. Requiere confirmar la instalación en Android. El código fuente permanece privado." --latest=false
+          fi
+      - name: Announce update after the APK is available
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp .incoming/build.json "$RUNNER_TEMP/build.json"
+          git pull --rebase origin main
+          if [ -f latest.json ] && [ "$(jq -r .versionCode latest.json)" -ge "$VERSION_CODE" ]; then
+            echo "A newer or identical version is already published"
+            exit 0
+          fi
+          cp "$RUNNER_TEMP/build.json" latest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add latest.json
+          git commit -m "Announce testing update $VERSION_CODE"
+          git push origin HEAD:main
+          gh release edit "v$VERSION_CODE" --latest
